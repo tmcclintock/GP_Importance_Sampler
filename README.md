@@ -1,2 +1,7 @@
 # GP_Importance_Sampler
-A tool for performing importance sampling on an MCMC chain.
+
+Importance sampling is a critical tool in statistical analyses. This technique allows one to combine two probability distributions after (at least) one of them has already been sampled. In practice, this process is very simple: it amounts to re-weighting an MCMC chain with weights given by a new distribution of interest.
+
+As an explicit example, this is the primary method by which the Planck CMB constraints are combined with other distributions. Evaluating the Planck likelihood is reletively costly, and can completely consume the resources on a local machine. If we were interested in, say, applying a new prior to the Planck results, then rather than re-running the Planck analysis with a new prior, we can importance sample the Planck chains with the new prior.
+
+This repository contains a tool that allows for importance sampling via Gaussian Process emulation. Given an MCMC chain, this tool selects points from the chain spread evenly across the posterior distribution, and then performs Gaussian Process regression on the likelihood as a function of the underlying parameters of the chain. The result is a tool from which a user can ask for the likelihood at any point in the parameter space, thus making importance sampling much easier to perform.
