@@ -10,8 +10,9 @@ class ImportanceSampler(object):
     Args:
         chain: an MCMC chain that we want to draw samples from
         likes: the likelihoods of the samples in the MCMC chain
+        scale: 'spread' of the training points. Default is 6.
     """
-    def __init__(self, chain, likes):
+    def __init__(self, chain, likes, scale=10):
         chain = np.asarray(chain)
         likes = np.asarray(likes)
         
@@ -24,7 +25,7 @@ class ImportanceSampler(object):
         self.chain = np.atleast_2d(chain)
         self.likes = likes
         self.lnlikes = np.log(likes)
-        self.sample_generator = sg.SampleGenerator(self.chain, scale=3)
+        self.sample_generator = sg.SampleGenerator(self.chain, scale=6)
         #self.select_training_points(method="circular")
         #self.train()
 
@@ -95,7 +96,7 @@ class ImportanceSampler(object):
         
 if __name__ == "__main__":
     import scipy.stats
-    x_mean, y_mean = 0, 0
+    x_mean, y_mean = 3, 0
     means = np.array([x_mean, y_mean])
     cov = np.array([[1,0.1],[0.1,0.5]])
     icov = np.linalg.inv(cov)
@@ -118,8 +119,8 @@ if __name__ == "__main__":
     plt.plot(xp, yp, c='r')
     plt.show()
     
-    plt.hist(x, density=True, label=r"P(x)")
-    p = np.vstack((yp,xp)).T
+    plt.hist(x, density=True, label=r"$P(x)$")
+    p = np.vstack((xp,yp)).T
     lnLp = IS.predict(p)
     Lp = np.exp(lnLp)
     plt.plot(xp, Lp, label=r"$P(x|y=\mu_y)$")
