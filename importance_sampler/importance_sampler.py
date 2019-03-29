@@ -47,7 +47,7 @@ class ImportanceSampler(object):
             self.sample_generator = sg.SampleGenerator(self.chain, scale=scale)
         return
         
-    def select_training_points(self, Nsamples=40, method="LHMDU", **kwargs):
+    def select_training_points(self, Nsamples=40, method="LH", **kwargs):
         samples = self.sample_generator.get_samples(Nsamples, method, **kwargs)
         cov = self.sample_generator.covariance
         icov = np.linalg.inv(cov)
@@ -113,7 +113,7 @@ if __name__ == "__main__":
                                           size=(1000))
     likes = scipy.stats.multivariate_normal.pdf(chain, mean=means, cov=cov)
     IS = ImportanceSampler(chain, likes)
-    IS.select_training_points(100, method="circular")
+    IS.select_training_points(100, method="LH")
     IS.train()
     x, y = chain.T
     xp = np.linspace(np.min(x),np.max(x))
