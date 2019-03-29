@@ -23,6 +23,8 @@ class ImportanceSampler(object):
         if likes.ndim > 1:
             raise Exception("likes must be a 1D array.")
         self.chain = np.atleast_2d(chain)
+        if len(self.chain) < len(self.chain[0]):
+            raise Exception("More samples than parameters in chain.")
         self.likes = likes
         self.lnlikes = np.log(likes)
         self.sample_generator = sg.SampleGenerator(self.chain, scale=scale)
