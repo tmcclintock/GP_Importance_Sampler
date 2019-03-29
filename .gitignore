@@ -1,4 +1,5 @@
 # chains
+notebooks/*txt
 notebooks/chains/*
 
 # emacs backup files

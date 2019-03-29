@@ -9,24 +9,31 @@ class ImportanceSampler(object):
 
     Args:
         chain: an MCMC chain that we want to draw samples from
-        likes: the likelihoods of the samples in the MCMC chain
+        lnlikes: the log-likelihoods of the samples in the MCMC chain
         scale: 'spread' of the training points. Default is 6.
     """
-    def __init__(self, chain, likes, scale=10):
+    def __init__(self, chain, lnlikes, scale=10):
         chain = np.asarray(chain)
-        likes = np.asarray(likes)
+        lnlikes = np.asarray(lnlikes).copy()
         
         if chain.ndim > 2:
             raise Exception("chain cannot be more than two dimensional.")
         if chain.ndim < 1:
             raise Exception("chain must be a list of parameters.")
-        if likes.ndim > 1:
-            raise Exception("likes must be a 1D array.")
+        if lnlikes.ndim > 1:
+            raise Exception("lnlikes must be a 1D array.")
         self.chain = np.atleast_2d(chain)
         if len(self.chain) < len(self.chain[0]):
             raise Exception("More samples than parameters in chain.")
-        self.likes = likes
-        self.lnlikes = np.log(likes)
+
+        #Most lnlikelihoods come in incorrectly normalized. Make an attempt to fix that
+        #lnlikes -= np.min(lnlikes) #subtract off the minimum
+        #lnlikes /= np.max(lnlikes) #range of values now goes from 0 to 1
+        #lnlikes -= 10 #pretend that the minimum value in the chain is a 10 sigma fluctuation
+        self.lnlike_max = np.max(lnlikes)
+        lnlikes -= self.lnlike_max
+        
+        self.lnlikes = lnlikes
         self.sample_generator = sg.SampleGenerator(self.chain, scale=scale)
         self.chain_means = np.mean(self.chain, 0)
         self.chain_stddevs = np.sqrt(self.sample_generator.covariance.diagonal())
@@ -62,21 +69,21 @@ class ImportanceSampler(object):
     
     def get_training_data(self):
         inds = self.training_inds
-        return (self.chain[inds], self.likes[inds], self.lnlikes[inds])
+        return (self.chain[inds], self.lnlikes[inds])
 
     def train(self, kernel=None):
         """Train a Gaussian Process to interpolate the log-likelihood
         of the training samples.
         """
-        x, L, lnL = self.get_training_data()
+        x, lnL = self.get_training_data()
         #Remove the mean and standard deviation from the training data
         x[:] -= self.chain_means
         x[:] /= self.chain_stddevs
+        _guess = 0.5*np.ones(len(self.sample_generator.covariance))
         if kernel is None:
-            cov = self.sample_generator.covariance
-            #m = george.Metric(cov, ndim=len(cov))
-            kernel = kernels.ExpSquaredKernel(metric=cov, ndim=2)
-        gp = george.GP(kernel, mean=10*np.min(lnL))
+            kernel = kernels.ExpSquaredKernel(metric=_guess, ndim=len(_guess))
+            #kernel = kernels.ExpSquaredKernel(metric=self.sample_generator.covariance, ndim=len(_guess))
+        gp = george.GP(kernel, mean=10*np.min(self.lnlikes)) #Extrapolate to a 20sigma fluctuation
         gp.compute(x)
         def neg_ln_likelihood(p):
             gp.set_parameter_vector(p)
@@ -91,16 +98,16 @@ class ImportanceSampler(object):
                           jac=grad_neg_ln_likelihood)
         gp.set_parameter_vector(result.x)
         self.gp = gp
-        self.lnL = lnL
+        self.lnL_training = lnL
         return
 
     def predict(self, x, return_var=False):
         #Remove the chain mean and standard dev from the predicted point
-        x = np.atleast_2d(x)
+        x = np.atleast_2d(x).copy()
         x[:] -= self.chain_means
         x[:] /= self.chain_stddevs
-        pred, pred_var = self.gp.predict(self.lnL, x)
-        return pred
+        pred, pred_var = self.gp.predict(self.lnL_training, x)
+        return pred + self.lnlike_max #re-add on the max that we took of when building
         
 if __name__ == "__main__":
     import scipy.stats
@@ -112,7 +119,8 @@ if __name__ == "__main__":
                                           cov=cov,
                                           size=(1000))
     likes = scipy.stats.multivariate_normal.pdf(chain, mean=means, cov=cov)
-    IS = ImportanceSampler(chain, likes)
+    lnlikes = np.log(likes)
+    IS = ImportanceSampler(chain, lnlikes)
     IS.select_training_points(100, method="LH")
     IS.train()
     x, y = chain.T
@@ -121,8 +129,8 @@ if __name__ == "__main__":
 
     import matplotlib.pyplot as plt
     plt.scatter(x, y, c='b', s=0.5, alpha=0.2)
-    points, _, _ = IS.get_training_data()
-    plt.scatter(points[:,0], points[:,1], c='k', s=10)
+    points, _ = IS.get_training_data()
+    plt.scatter(points[:,0], points[:,1], c='k', s=5)
     plt.plot(xp, yp, c='r')
     plt.show()
     
