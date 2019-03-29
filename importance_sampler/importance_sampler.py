@@ -25,7 +25,9 @@ class ImportanceSampler(object):
         self.chain = np.atleast_2d(chain)
         self.likes = likes
         self.lnlikes = np.log(likes)
-        self.sample_generator = sg.SampleGenerator(self.chain, scale=6)
+        self.sample_generator = sg.SampleGenerator(self.chain, scale=scale)
+        self.chain_means = np.mean(self.chain, 0)
+        self.chain_stddevs = np.sqrt(self.sample_generator.covariance.diagonal())
         #self.select_training_points(method="circular")
         #self.train()
 
@@ -65,6 +67,9 @@ class ImportanceSampler(object):
         of the training samples.
         """
         x, L, lnL = self.get_training_data()
+        #Remove the mean and standard deviation from the training data
+        x[:] -= self.chain_means
+        x[:] /= self.chain_stddevs
         if kernel is None:
             cov = self.sample_generator.covariance
             #m = george.Metric(cov, ndim=len(cov))
@@ -82,15 +87,16 @@ class ImportanceSampler(object):
         #try:
         result = minimize(neg_ln_likelihood, gp.get_parameter_vector(),
                           jac=grad_neg_ln_likelihood)
-        #except np.linalg.linalg.LinAlgError:
-        #    print("LinAlg error. Select new training points.")
-        #    return
         gp.set_parameter_vector(result.x)
         self.gp = gp
         self.lnL = lnL
         return
 
     def predict(self, x, return_var=False):
+        #Remove the chain mean and standard dev from the predicted point
+        x = np.atleast_2d(x)
+        x[:] -= self.chain_means
+        x[:] /= self.chain_stddevs
         pred, pred_var = self.gp.predict(self.lnL, x)
         return pred
         
@@ -107,7 +113,6 @@ if __name__ == "__main__":
     IS = ImportanceSampler(chain, likes)
     IS.select_training_points(100, method="circular")
     IS.train()
-
     x, y = chain.T
     xp = np.linspace(np.min(x),np.max(x))
     yp = np.zeros_like(xp) + y_mean
