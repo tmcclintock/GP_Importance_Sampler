@@ -83,7 +83,9 @@ class ImportanceSampler(object):
         if kernel is None:
             kernel = kernels.ExpSquaredKernel(metric=_guess, ndim=len(_guess))
             #kernel = kernels.ExpSquaredKernel(metric=self.sample_generator.covariance, ndim=len(_guess))
-        gp = george.GP(kernel, mean=20*np.min(self.lnlikes)) #Extrapolate to a 20sigma fluctuation
+        #gp = george.GP(kernel, mean=20*np.min(self.lnlikes)) #Extrapolate to a 20sigma fluctuation
+        lnPmin = np.min(self.lnlikes)
+        gp = george.GP(kernel, mean=lnPmin-np.fabs(lnPmin)*3) #Extrapolate to a 20sigma fluctuation
         gp.compute(x)
         def neg_ln_likelihood(p):
             gp.set_parameter_vector(p)
