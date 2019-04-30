@@ -1,3 +1,5 @@
+*.DS_Store
+
 # chains
 notebooks/*npy
 notebooks/*txt
