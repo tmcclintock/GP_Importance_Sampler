@@ -118,7 +118,16 @@ class ImportanceSampler(object):
         self.lnL_training = lnL
         return
 
-    def predict(self, x, return_var=False):
+    def predict(self, x):
+        """Given a set of parameters, return the predicted log probability.
+
+        Args:
+            x (array-like): parameters to interpolate at
+        
+        Returns:
+            interpolated log probability at x.
+
+        """
         #Remove the chain mean and standard dev from the predicted point
         x = np.atleast_2d(x).copy()
         x[:] -= self.chain_means
