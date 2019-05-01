@@ -12,7 +12,7 @@ class ImportanceSampler(object):
         lnlikes: the log-likelihoods of the samples in the MCMC chain
         scale: 'spread' of the training points. Default is 6.
     """
-    def __init__(self, chain, lnlikes, scale=10):
+    def __init__(self, chain, lnlikes, scale=5):
         chain = np.asarray(chain)
         lnlikes = np.asarray(lnlikes).copy()
         
@@ -26,10 +26,7 @@ class ImportanceSampler(object):
         if len(self.chain) < len(self.chain[0]):
             raise Exception("More samples than parameters in chain.")
 
-        #Most lnlikelihoods come in incorrectly normalized. Make an attempt to fix that
-        #lnlikes -= np.min(lnlikes) #subtract off the minimum
-        #lnlikes /= np.max(lnlikes) #range of values now goes from 0 to 1
-        #lnlikes -= 10 #pretend that the minimum value in the chain is a 10 sigma fluctuation
+        #Remove the max lnlike. This can help numerical stability
         self.lnlike_max = np.max(lnlikes)
         lnlikes -= self.lnlike_max
         
@@ -37,8 +34,6 @@ class ImportanceSampler(object):
         self.sample_generator = sg.SampleGenerator(self.chain, scale=scale)
         self.chain_means = np.mean(self.chain, 0)
         self.chain_stddevs = np.sqrt(self.sample_generator.covariance.diagonal())
-        #self.select_training_points(method="circular")
-        #self.train()
 
     def assign_new_sample_generator(self, scale=5, sample_generator=None):
         """Make a new SampleGenerator object and assign it to this sampler.
@@ -55,6 +50,15 @@ class ImportanceSampler(object):
         return
         
     def select_training_points(self, Nsamples=40, method="LH", **kwargs):
+        """Select training points from the chain to train the GPs.
+        
+        Args:
+            Nsamples (int): number of samples to use; defualt is 40
+            method (string): design for training points; defualt is Latin
+                Hypercube, or 'LH'
+            kwargs: keywords to pass the sample generator.get_samples() method
+
+        """
         samples = self.sample_generator.get_samples(Nsamples, method, **kwargs)
         cov = self.sample_generator.covariance
         icov = np.linalg.inv(cov)
@@ -68,12 +72,22 @@ class ImportanceSampler(object):
         return
     
     def get_training_data(self):
+        """Obtain the currently used training points
+
+        return:
+            Tuple of chain and lnlikelihood values.
+        """
         inds = self.training_inds
         return (self.chain[inds], self.lnlikes[inds])
 
     def train(self, kernel=None):
         """Train a Gaussian Process to interpolate the log-likelihood
         of the training samples.
+
+        Args:
+            kernel (george.kernels.Kernel object): kernel to use, or any 
+                acceptable object that can be accepted by the george.GP object
+
         """
         x, lnL = self.get_training_data()
         #Remove the mean and standard deviation from the training data
@@ -83,9 +97,10 @@ class ImportanceSampler(object):
         if kernel is None:
             kernel = kernels.ExpSquaredKernel(metric=_guess, ndim=len(_guess))
             #kernel = kernels.ExpSquaredKernel(metric=self.sample_generator.covariance, ndim=len(_guess))
-        #gp = george.GP(kernel, mean=20*np.min(self.lnlikes)) #Extrapolate to a 20sigma fluctuation
+        #Note: the mean is set slightly lower that the minimum lnlike
+        #gp = george.GP(kernel, mean=20*np.min(self.lnlikes))
         lnPmin = np.min(self.lnlikes)
-        gp = george.GP(kernel, mean=lnPmin-np.fabs(lnPmin)*3) #Extrapolate to a 20sigma fluctuation
+        gp = george.GP(kernel, mean=lnPmin-np.fabs(lnPmin)*3)
         gp.compute(x)
         def neg_ln_likelihood(p):
             gp.set_parameter_vector(p)
