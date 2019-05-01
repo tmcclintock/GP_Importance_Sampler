@@ -111,8 +111,10 @@ class ImportanceSampler(object):
             return -gp.grad_log_likelihood(lnL)
 
         #try:
+        #method = "Nelder-Mead"
         result = minimize(neg_ln_likelihood, gp.get_parameter_vector(),
-                          jac=grad_neg_ln_likelihood)
+                          jac=grad_neg_ln_likelihood)#, method=method)
+        print result
         gp.set_parameter_vector(result.x)
         self.gp = gp
         self.lnL_training = lnL
