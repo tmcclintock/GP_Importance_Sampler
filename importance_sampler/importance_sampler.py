@@ -93,9 +93,9 @@ class ImportanceSampler(object):
         #Remove the mean and standard deviation from the training data
         x[:] -= self.chain_means
         x[:] /= self.chain_stddevs
-        _guess = 0.5*np.ones(len(self.sample_generator.covariance))
+        _guess = 0.5#*np.ones(1)#len(self.sample_generator.covariance))
         if kernel is None:
-            kernel = kernels.ExpSquaredKernel(metric=_guess, ndim=len(_guess))
+            kernel = kernels.ExpSquaredKernel(metric=_guess, ndim=len(x[0]))
             #kernel = kernels.ExpSquaredKernel(metric=self.sample_generator.covariance, ndim=len(_guess))
         #Note: the mean is set slightly lower that the minimum lnlike
         #gp = george.GP(kernel, mean=20*np.min(self.lnlikes))
