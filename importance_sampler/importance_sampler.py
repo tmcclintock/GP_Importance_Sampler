@@ -7,6 +7,9 @@ from scipy.optimize import minimize
 class ImportanceSampler(object):
     """A class used for enabling importance sampling of an MCMC chain.
 
+    Note: the 'scale' parameter is not used if you use the `lnlikes_binning`
+    method of choosing training points.
+
     Args:
         chain: an MCMC chain that we want to draw samples from
         lnlikes: the log-likelihoods of the samples in the MCMC chain
@@ -48,9 +51,61 @@ class ImportanceSampler(object):
         else:
             self.sample_generator = sg.SampleGenerator(self.chain, scale=scale)
         return
+
+    def _select_lnlike_based_training_points(self, Nsamples, Nbins=5):
+        """Select samples from the histogramed loglikelihoods.
+
+        Args:
+            Nsamples (int): number of samples to use
+            Nbins (int): number of histogram bins to chop up the likelihoods; default is 5
+
+        Returns:
+            (array-like): indices of the chain points to use for trianing
+
+        """
+        if Nbins > Nsamples:
+            raise Exception("Cannot have more bins than samples.")
+
+        N_per_bin = Nsamples / Nbins
+        N_extra = Nsamples % Nbins #extra for the last bin
+
+        lnlikes = self.lnlikes
+        N_in_bins, edges = np.histogram(lnlikes, bins=Nbins)
+        all_inds = np.arange(len(lnlikes)) #individual indices
+
+        #indices to return
+        ret_inds = np.array([])
+
+        #Sort the lnlikes
+        sorted_inds = np.argsort(lnlikes)
+        llsorted = lnlikes[sorted_inds]
+        for i in range(0, Nbins):
+            ii = (llsorted >= edges[i]) * (llsorted < edges[i+1])
+            sii = sorted_inds[ii]
+            #If the bin is not populated (the tail), use the whole bin
+            if len(sii) < N_per_bin:
+                ret_inds = np.append(ret_inds, sii)
+            else:
+                #Otherwise, take a random selection from the bin
+                ret_inds = np.append(ret_inds, np.random.choice(sii, N_per_bin, replace=False))
+            continue
+        #If we don't have enough samples, take more samples but make sure we have no duplicates
+        if len(ret_inds) < Nsamples:
+            Nleft = Nsamples - len(ret_inds)
+            for i in range(0, Nleft):
+                new_sample = np.random.choice(all_inds)
+                if new_sample not in ret_inds: #Enforce no replacement
+                    ret_inds = np.append(ret_inds, new_sample)
+                else:
+                    i -= 1
+                continue
+        print Nbins#ret_inds
+        return ret_inds.astype(int)
         
     def select_training_points(self, Nsamples=40, method="LH", **kwargs):
         """Select training points from the chain to train the GPs.
+
+        Note: this method does not use the "scale" parameter.
         
         Args:
             Nsamples (int): number of samples to use; defualt is 40
@@ -59,16 +114,27 @@ class ImportanceSampler(object):
             kwargs: keywords to pass the sample generator.get_samples() method
 
         """
-        samples = self.sample_generator.get_samples(Nsamples, method, **kwargs)
-        cov = self.sample_generator.covariance
-        icov = np.linalg.inv(cov)
-        def sqdists(chain, s, icov):
-            X = chain[:] - s
-            r = np.dot(icov, X.T).T
-            d = np.sum(X * r, axis=1)
-            return d
-        indices = np.array([np.argmin(sqdists(self.chain, s, icov)) for s in samples])
-        self.training_inds = indices
+        if method == "lnlikes_binning":
+            Nbins = 5
+            if kwargs is not None:
+                for key, value in kwargs.iteritems():
+                    if key == "Nbins":
+                        Nbins = value
+                    continue
+            indices = self._select_lnlike_based_training_points(Nsamples, Nbins)
+        else:
+            samples = self.sample_generator.get_samples(Nsamples, method, **kwargs)
+            cov = self.sample_generator.covariance
+            def sqdists(chain, s, cov):
+                X = chain[:] - s
+                r = np.linalg.solve(cov, X.T).T
+                d = np.sum(X * r, axis=1)
+                return d
+            indices = np.array([np.argmin(sqdists(self.chain, s, cov)) for s in samples])
+            
+        #Include the max liklihood point
+        best_ind = np.argmax(self.lnlikes)
+        self.training_inds = np.append(indices, best_ind)
         return
     
     def get_training_data(self):
@@ -145,23 +211,23 @@ if __name__ == "__main__":
     icov = np.linalg.inv(cov)
     chain = np.random.multivariate_normal(mean=means,
                                           cov=cov,
-                                          size=(1000))
+                                          size=(10000))
     likes = scipy.stats.multivariate_normal.pdf(chain, mean=means, cov=cov)
     lnlikes = np.log(likes)
     IS = ImportanceSampler(chain, lnlikes)
-    IS.select_training_points(100, method="LH")
+    IS.select_training_points(1000, method="lnlikes_binning", Nbins = 5)
     IS.train()
     x, y = chain.T
-    xp = np.linspace(np.min(x),np.max(x))
-    yp = np.zeros_like(xp) + y_mean
 
+    import matplotlib
+    matplotlib.use('TkAgg')
     import matplotlib.pyplot as plt
     plt.scatter(x, y, c='b', s=0.5, alpha=0.2)
     points, _ = IS.get_training_data()
     plt.scatter(points[:,0], points[:,1], c='k', s=5)
-    plt.plot(xp, yp, c='r')
     plt.show()
-    
+
+    """
     plt.hist(x, density=True, label=r"$P(x)$")
     p = np.vstack((xp,yp)).T
     lnLp = IS.predict(p)
@@ -169,3 +235,4 @@ if __name__ == "__main__":
     plt.plot(xp, Lp, label=r"$P(x|y=\mu_y)$")
     plt.legend()
     plt.show()
+    """
