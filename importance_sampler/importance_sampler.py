@@ -37,6 +37,11 @@ class ImportanceSampler(object):
         self.sample_generator = sg.SampleGenerator(self.chain, scale=scale)
         self.chain_means = np.mean(self.chain, 0)
         self.chain_stddevs = np.sqrt(self.sample_generator.covariance.diagonal())
+        self.chain_cov = np.cov(self.chain.T)
+        w, R = np.linalg.eig(self.chain_cov)
+        self.eigenvalues = w
+        self.rotation_matrix = R
+        
 
     def assign_new_sample_generator(self, scale=5, sample_generator=None):
         """Make a new SampleGenerator object and assign it to this sampler.
@@ -159,6 +164,8 @@ class ImportanceSampler(object):
         #Remove the mean and standard deviation from the training data
         x[:] -= self.chain_means
         x[:] /= self.chain_stddevs
+        x = np.array([np.dot(self.rotation_matrix.T, xi) for xi in x])
+        #x[:] = np.dot(self.rotation_matrix.T, x[:])
         _guess = 0.5#*np.ones(1)#len(self.sample_generator.covariance))
         if kernel is None:
             kernel = kernels.ExpSquaredKernel(metric=_guess, ndim=len(x[0]))
@@ -200,6 +207,7 @@ class ImportanceSampler(object):
         x = np.atleast_2d(x).copy()
         x[:] -= self.chain_means
         x[:] /= self.chain_stddevs
+        x = np.array([np.dot(self.rotation_matrix.T, xi) for xi in x])
         pred, pred_var = self.gp.predict(self.lnL_training, x)
         return pred + self.lnlike_max #re-add on the max that we took of when building
         
