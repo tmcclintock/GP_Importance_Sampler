@@ -168,12 +168,13 @@ class ImportanceSampler(object):
         #x[:] = np.dot(self.rotation_matrix.T, x[:])
         _guess = 0.5#*np.ones(1)#len(self.sample_generator.covariance))
         if kernel is None:
-            kernel = kernels.ExpSquaredKernel(metric=_guess, ndim=len(x[0]))
+            #kernel = kernels.ExpSquaredKernel(metric=_guess, ndim=len(x[0]))
+            kernel = kernels.Matern32Kernel(metric=_guess, ndim=len(x[0]))
             #kernel = kernels.ExpSquaredKernel(metric=self.sample_generator.covariance, ndim=len(_guess))
         #Note: the mean is set slightly lower that the minimum lnlike
         #gp = george.GP(kernel, mean=20*np.min(self.lnlikes))
         lnPmin = np.min(self.lnlikes)
-        gp = george.GP(kernel, mean=lnPmin-np.fabs(lnPmin)*3)
+        gp = george.GP(kernel, mean=lnPmin-np.fabs(lnPmin))
         gp.compute(x)
         def neg_ln_likelihood(p):
             gp.set_parameter_vector(p)
