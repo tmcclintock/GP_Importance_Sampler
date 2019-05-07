@@ -43,21 +43,14 @@ class ImportanceSampler(object):
         self.eigenvalues = w
         self.rotation_matrix = R
 
-        self.chain_means = np.mean(self.chain, 0)
-        self.chain_cov = np.cov(self.chain.T)
-        self.chain_stddevs = np.sqrt(self.chain_cov.diagonal())
-        self.chain_mins = np.min(self.chain, 0)
-        self.chain_maxs = np.max(self.chain, 0)
-
-        #
         self.chain_rotated = np.array([np.dot(R.T, ci) for ci in chain])
         self.rotated_chain_means = np.mean(self.chain_rotated, 0)
         self.rotated_chain_stddevs = np.std(self.chain_rotated, 0)
-        self.rotated_chain_mins = np.min(self.chain_rotated, 0)
-        self.rotated_chain_maxs = np.max(self.chain_rotated, 0)
         self.chain_rotated_regularized = self.chain_rotated[:] - \
             self.rotated_chain_means
         self.chain_rotated_regularized /= self.rotated_chain_stddevs
+        self.rotated_chain_mins = np.min(self.chain_rotated_regularized, 0)
+        self.rotated_chain_maxs = np.max(self.chain_rotated_regularized, 0)
 
     def assign_new_sample_generator(self, scale=5, sample_generator=None):
         """Make a new SampleGenerator object and assign it to this sampler.
@@ -179,12 +172,6 @@ class ImportanceSampler(object):
         inds = self.training_inds
         x = self.chain_rotated_regularized[inds]
         lnL = self.lnlikes[inds]
-        #x, lnL = self.get_training_data()
-        #Remove the mean and standard deviation from the training data
-        #x[:] -= self.chain_means
-        #x[:] /= self.chain_stddevs
-        #x = np.array([np.dot(self.rotation_matrix.T, xi) for xi in x])
-        #x[:] = np.dot(self.rotation_matrix.T, x[:])
         _guess = 3.#*np.ones(1)#len(self.sample_generator.covariance))
         if kernel is None:
             kernel = kernels.ExpSquaredKernel(metric=_guess, ndim=len(x[0]))
@@ -211,6 +198,14 @@ class ImportanceSampler(object):
         self.lnL_training = lnL
         return
 
+    def _transform_data(self, x):
+        #Get x into the eigenbasis
+        R = self.rotation_matrix.T
+        xR = np.array([np.dot(R, xi) for xi in x])
+        xR -= self.rotated_chain_means
+        xR /= self.rotated_chain_stddevs
+        return xR
+
     def predict(self, x):
         """Given a set of parameters, return the predicted log probability.
 
@@ -223,22 +218,15 @@ class ImportanceSampler(object):
         """
         #Make it the correct format
         x = np.atleast_2d(x).copy()
-        #Put hard priors past the boundaries of the parameters
-        R = self.rotation_matrix.T
-        xR = np.array([np.dot(R, xi) for xi in x])
-        xR -= self.rotated_chain_means
-        xR -= self.rotated_chain_stddevs
-        for xi in xR:
-            if any(xi > self.rotated_chain_maxs) or any(xi < self.rotated_chain_mins):
-                return -1e99 #a small number
+        #Get x into the eigenbasis
+        x = self._transform_data(x)
 
-        #Remove the chain mean and standard dev from the predicted point
-        #x[:] -= self.chain_means
-        #x[:] /= self.chain_stddevs
-        #x = np.array([np.dot(self.rotation_matrix.T, xi) for xi in x])
+        #Hard prior at the edges of the eigenbasis
+        #for xi in x:
+        #    if any(xi > self.rotated_chain_maxs) or any(xi < self.rotated_chain_mins):
+        #        return -1e99 #a small number
 
         pred, pred_var = self.gp.predict(self.lnL_training, x)
-        #re-add on the max that we took of when building
         return pred + self.lnlike_max 
         
 if __name__ == "__main__":
