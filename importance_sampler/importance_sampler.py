@@ -25,6 +25,7 @@ class ImportanceSampler(object):
             raise Exception("chain must be a list of parameters.")
         if lnlikes.ndim > 1:
             raise Exception("lnlikes must be a 1D array.")
+        
         self.chain = np.atleast_2d(chain)
         if len(self.chain) < len(self.chain[0]):
             raise Exception("More samples than parameters in chain.")
@@ -35,13 +36,28 @@ class ImportanceSampler(object):
         
         self.lnlikes = lnlikes
         self.sample_generator = sg.SampleGenerator(self.chain, scale=scale)
-        self.chain_means = np.mean(self.chain, 0)
-        self.chain_stddevs = np.sqrt(self.sample_generator.covariance.diagonal())
+
+        #Compute the rotation matrix of the chain
         self.chain_cov = np.cov(self.chain.T)
         w, R = np.linalg.eig(self.chain_cov)
         self.eigenvalues = w
         self.rotation_matrix = R
-        
+
+        self.chain_means = np.mean(self.chain, 0)
+        self.chain_cov = np.cov(self.chain.T)
+        self.chain_stddevs = np.sqrt(self.chain_cov.diagonal())
+        self.chain_mins = np.min(self.chain, 0)
+        self.chain_maxs = np.max(self.chain, 0)
+
+        #
+        self.chain_rotated = np.array([np.dot(R.T, ci) for ci in chain])
+        self.rotated_chain_means = np.mean(self.chain_rotated, 0)
+        self.rotated_chain_stddevs = np.std(self.chain_rotated, 0)
+        self.rotated_chain_mins = np.min(self.chain_rotated, 0)
+        self.rotated_chain_maxs = np.max(self.chain_rotated, 0)
+        self.chain_rotated_regularized = self.chain_rotated[:] - \
+            self.rotated_chain_means
+        self.chain_rotated_regularized /= self.rotated_chain_stddevs
 
     def assign_new_sample_generator(self, scale=5, sample_generator=None):
         """Make a new SampleGenerator object and assign it to this sampler.
@@ -94,7 +110,8 @@ class ImportanceSampler(object):
                 #Otherwise, take a random selection from the bin
                 ret_inds = np.append(ret_inds, np.random.choice(sii, N_per_bin, replace=False))
             continue
-        #If we don't have enough samples, take more samples but make sure we have no duplicates
+        #If we don't have enough samples, take more samples
+        #but make sure we have no duplicates
         if len(ret_inds) < Nsamples:
             Nleft = Nsamples - len(ret_inds)
             for i in range(0, Nleft):
@@ -104,7 +121,6 @@ class ImportanceSampler(object):
                 else:
                     i -= 1
                 continue
-        print Nbins#ret_inds
         return ret_inds.astype(int)
         
     def select_training_points(self, Nsamples=40, method="LH", **kwargs):
@@ -160,21 +176,24 @@ class ImportanceSampler(object):
                 acceptable object that can be accepted by the george.GP object
 
         """
-        x, lnL = self.get_training_data()
+        inds = self.training_inds
+        x = self.chain_rotated_regularized[inds]
+        lnL = self.lnlikes[inds]
+        #x, lnL = self.get_training_data()
         #Remove the mean and standard deviation from the training data
-        x[:] -= self.chain_means
-        x[:] /= self.chain_stddevs
-        x = np.array([np.dot(self.rotation_matrix.T, xi) for xi in x])
+        #x[:] -= self.chain_means
+        #x[:] /= self.chain_stddevs
+        #x = np.array([np.dot(self.rotation_matrix.T, xi) for xi in x])
         #x[:] = np.dot(self.rotation_matrix.T, x[:])
-        _guess = 0.5#*np.ones(1)#len(self.sample_generator.covariance))
+        _guess = 3.#*np.ones(1)#len(self.sample_generator.covariance))
         if kernel is None:
-            #kernel = kernels.ExpSquaredKernel(metric=_guess, ndim=len(x[0]))
-            kernel = kernels.Matern32Kernel(metric=_guess, ndim=len(x[0]))
+            kernel = kernels.ExpSquaredKernel(metric=_guess, ndim=len(x[0]))
+            #kernel = kernels.Matern32Kernel(metric=_guess, ndim=len(x[0]))
             #kernel = kernels.ExpSquaredKernel(metric=self.sample_generator.covariance, ndim=len(_guess))
         #Note: the mean is set slightly lower that the minimum lnlike
         #gp = george.GP(kernel, mean=20*np.min(self.lnlikes))
         lnPmin = np.min(self.lnlikes)
-        gp = george.GP(kernel, mean=lnPmin-np.fabs(lnPmin))
+        gp = george.GP(kernel, mean=lnPmin-np.fabs(lnPmin*3))
         gp.compute(x)
         def neg_ln_likelihood(p):
             gp.set_parameter_vector(p)
@@ -184,10 +203,8 @@ class ImportanceSampler(object):
             gp.set_parameter_vector(p)
             return -gp.grad_log_likelihood(lnL)
 
-        #try:
-        #method = "Nelder-Mead"
         result = minimize(neg_ln_likelihood, gp.get_parameter_vector(),
-                          jac=grad_neg_ln_likelihood)#, method=method)
+                          jac=grad_neg_ln_likelihood)
         print result
         gp.set_parameter_vector(result.x)
         self.gp = gp
@@ -204,13 +221,25 @@ class ImportanceSampler(object):
             interpolated log probability at x.
 
         """
-        #Remove the chain mean and standard dev from the predicted point
+        #Make it the correct format
         x = np.atleast_2d(x).copy()
-        x[:] -= self.chain_means
-        x[:] /= self.chain_stddevs
-        x = np.array([np.dot(self.rotation_matrix.T, xi) for xi in x])
+        #Put hard priors past the boundaries of the parameters
+        R = self.rotation_matrix.T
+        xR = np.array([np.dot(R, xi) for xi in x])
+        xR -= self.rotated_chain_means
+        xR -= self.rotated_chain_stddevs
+        for xi in xR:
+            if any(xi > self.rotated_chain_maxs) or any(xi < self.rotated_chain_mins):
+                return -1e99 #a small number
+
+        #Remove the chain mean and standard dev from the predicted point
+        #x[:] -= self.chain_means
+        #x[:] /= self.chain_stddevs
+        #x = np.array([np.dot(self.rotation_matrix.T, xi) for xi in x])
+
         pred, pred_var = self.gp.predict(self.lnL_training, x)
-        return pred + self.lnlike_max #re-add on the max that we took of when building
+        #re-add on the max that we took of when building
+        return pred + self.lnlike_max 
         
 if __name__ == "__main__":
     import scipy.stats
